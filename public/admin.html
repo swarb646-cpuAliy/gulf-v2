@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>لوحة التحكم - العداد الثابت</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        :root { --p: #075e54; --s: #128c7e; --unread: #25d366; }
+        body { font-family: sans-serif; background: #f0f2f5; margin: 0; display: flex; height: 100vh; overflow: hidden; }
+        
+        /* القائمة الجانبية */
+        .sidebar { width: 320px; background: white; border-left: 1px solid #ddd; display: flex; flex-direction: column; }
+        .sidebar-header { padding: 20px; background: var(--p); color: white; font-weight: bold; text-align: center; }
+        
+        .customer-item { 
+            padding: 15px; border-bottom: 1px solid #eee; cursor: pointer; 
+            display: flex; justify-content: space-between; align-items: center; transition: 0.3s;
+        }
+        .customer-item:hover { background: #f9f9f9; }
+        .customer-item.active { background: #e7f3f3; border-right: 5px solid var(--s); }
+
+        /* العداد الثابت */
+        .badge { 
+            background: var(--unread); color: white; border-radius: 50%; 
+            min-width: 22px; height: 22px; font-size: 12px; 
+            display: flex; align-items: center; justify-content: center; 
+            font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .chat-area { flex: 1; display: flex; flex-direction: column; background: #e5ddd5; }
+        .chat-header { padding: 15px; background: #f0f0f0; border-bottom: 1px solid #ddd; font-weight: bold; }
+        .messages { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+        .msg { padding: 10px 15px; border-radius: 12px; max-width: 75%; font-size: 14px; }
+        .m-admin { align-self: flex-end; background: #dcf8c6; }
+        .m-user { align-self: flex-start; background: white; }
+
+        .input-box { padding: 15px; background: #f0f0f0; display: flex; gap: 10px; border-top: 1px solid #ddd; }
+        .input-box input { flex: 1; padding: 12px; border-radius: 25px; border: 1px solid #ccc; outline: none; }
+        .btn-send { background: var(--p); color: white; border: none; padding: 0 25px; border-radius: 25px; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <div class="sidebar">
+        <div class="sidebar-header">المحادثات</div>
+        <div id="customerList" style="flex:1; overflow-y:auto;"></div>
+    </div>
+
+    <div class="chat-area">
+        <div id="chatTitle" class="chat-header">اختر عميلاً لبدء المحادثة</div>
+        <div id="msgList" class="messages"></div>
+        <div class="input-box">
+            <input id="replyTxt" placeholder="اكتب ردك..." onkeypress="if(event.key==='Enter') sendReply()">
+            <button class="btn-send" onclick="sendReply()">إرسال</button>
+        </div>
+    </div>
+
+<script>
+    const socket = io();
+    let currentId = null;
+    let allMsgs = [];
+    
+    // نظام "ذاكرة القراءة" - يخزن توقيت آخر رسالة قرأتها لكل عميل
+    let lastReadTimestamps = JSON.parse(localStorage.getItem('admin_read_marks') || '{}');
+
+    socket.on('init_history', h => { 
+        allMsgs = h; 
+        renderCustomers(); 
+        if(currentId) renderMessages();
+    });
+
+    socket.on('new_msg', m => {
+        allMsgs.push(m);
+        if (currentId === m.clientId) {
+            markAsRead(m.clientId);
+            renderMessages();
+        }
+        renderCustomers();
+    });
+
+    function renderCustomers() {
+        const list = document.getElementById('customerList');
+        const groups = {};
+        
+        allMsgs.forEach(m => {
+            if (!groups[m.clientId]) groups[m.clientId] = [];
+            groups[m.clientId].push(m);
+        });
+
+        // ترتيب العملاء: الأحدث فوق
+        const sortedIds = Object.keys(groups).sort((a,b) => {
+            return groups[b][groups[b].length-1].timestamp - groups[a][groups[a].length-1].timestamp;
+        });
+
+        list.innerHTML = sortedIds.map(id => {
+            const msgs = groups[id];
+            const userMsgs = msgs.filter(m => !m.isAdmin);
+            
+            // حساب العداد: كم رسالة من العميل جاءت "بعد" آخر مرة فتحت فيها المحادثة؟
+            const lastReadTime = lastReadTimestamps[id] || 0;
+            const unreadCount = userMsgs.filter(m => m.timestamp > lastReadTime).length;
+
+            return `
+                <div class="customer-item ${currentId === id ? 'active' : ''}" onclick="selectCustomer('${id}')">
+                    <span><i class="fas fa-user"></i> عميل: ${id}</span>
+                    ${unreadCount > 0 ? `<div class="badge">${unreadCount}</div>` : ''}
+                </div>`;
+        }).join('');
+    }
+
+    function selectCustomer(id) {
+        currentId = id;
+        document.getElementById('chatTitle').innerText = "محادثة مع: " + id;
+        markAsRead(id); // عند الضغط نعتبرها مقروءة
+        renderMessages();
+        renderCustomers();
+    }
+
+    function markAsRead(id) {
+        const userMsgs = allMsgs.filter(m => m.clientId === id && !m.isAdmin);
+        if (userMsgs.length > 0) {
+            // نخزن وقت أحدث رسالة للعميل في الذاكرة الدائمة
+            const latestTime = Math.max(...userMsgs.map(m => m.timestamp || 0));
+            lastReadTimestamps[id] = latestTime;
+            localStorage.setItem('admin_read_marks', JSON.stringify(lastReadTimestamps));
+        }
+    }
+
+    function renderMessages() {
+        const list = document.getElementById('msgList');
+        list.innerHTML = allMsgs.filter(m => m.clientId === currentId).map(m => `
+            <div class="msg ${m.isAdmin ? 'm-admin' : 'm-user'}">${m.text}</div>
+        `).join('');
+        list.scrollTop = 99999;
+    }
+
+    function sendReply() {
+        const t = document.getElementById('replyTxt');
+        if (currentId && t.value.trim()) {
+            const msg = { text: t.value, clientId: currentId, isAdmin: true, timestamp: Date.now() };
+            socket.emit('send_msg', msg);
+            t.value = '';
+        }
+    }
+</script>
+</body>
+</html>

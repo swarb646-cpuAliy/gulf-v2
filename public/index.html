@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>منصة الخليج</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        :root { --p: #075e54; --bg: #f0f2f5; }
+        body { font-family: sans-serif; background: var(--bg); margin: 0; padding-bottom: 80px; }
+        .header { background: var(--p); color: white; padding: 30px 20px; text-align: center; border-radius: 0 0 20px 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        .container { padding: 20px 15px; max-width: 600px; margin: auto; }
+        .svc-card { background: white; padding: 20px; border-radius: 15px; margin-bottom: 20px; box-shadow: 0 4px 15 rgba(0,0,0,0.05); border: 1px solid #eee; }
+        .svc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .svc-name { font-size: 18px; font-weight: bold; color: #333; }
+        .svc-price { color: var(--p); font-weight: bold; font-size: 16px; background: #e8f5e9; padding: 4px 10px; border-radius: 8px; }
+        .svc-desc { color: #666; font-size: 14px; line-height: 1.5; }
+        .order-btn { background: var(--p); color: white; border: none; width: 100%; padding: 12px; border-radius: 10px; font-weight: bold; cursor: pointer; }
+        .chat-trigger { position: fixed; bottom: 20px; right: 20px; background: #25d366; color: white; width: 60px; height: 60px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 30px; cursor: pointer; z-index: 1000; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+        .side-chat { position: fixed; bottom: 90px; right: 20px; width: 320px; height: 450px; background: white; border-radius: 15px; display: none; flex-direction: column; z-index: 1000; border: 1px solid #ccc; box-shadow: 0 5px 20px rgba(0,0,0,0.2); overflow: hidden; }
+        .chat-header { background: var(--p); color: white; padding: 15px; font-weight: bold; display: flex; justify-content: space-between; }
+        .chat-msgs { flex: 1; padding: 10px; overflow-y: auto; background: #e5ddd5; display: flex; flex-direction: column; gap: 8px; }
+        .msg-bubble { padding: 8px 12px; border-radius: 10px; max-width: 80%; font-size: 14px; word-wrap: break-word; }
+        .msg-user { align-self: flex-end; background: #dcf8c6; }
+        .msg-admin { align-self: flex-start; background: white; }
+        .file-link { display: block; color: #007bff; text-decoration: none; font-weight: bold; margin-top: 5px; }
+    </style>
+</head>
+<body>
+    <div class="header"><h1 id="pn">منصتكم الاولى</h1></div>
+    <div class="container" id="sl"></div>
+    <div class="chat-trigger" onclick="toggleChat()"><i class="fab fa-whatsapp"></i></div>
+    <div id="side-chat" class="side-chat">
+        <div class="chat-header"><span>دعم منصة الخليج</span><span onclick="toggleChat()" style="cursor:pointer">✕</span></div>
+        <div id="ms" class="chat-msgs"></div>
+        <div style="padding:10px; display:flex; gap:8px; background:white; align-items:center;">
+            <label style="font-size: 20px; cursor: pointer; color: #666;"><i class="fas fa-paperclip"></i><input type="file" id="fileInput" style="display:none" onchange="uploadFile()"></label>
+            <input id="mi" style="flex:1; padding:8px; border-radius:20px; border:1px solid #ddd; outline:none;" placeholder="اكتب استفسارك..." onkeypress="if(event.key==='Enter') sendMsg()">
+            <button onclick="sendMsg()" style="border:none; background:var(--p); color:white; border-radius:50%; width:35px; height:35px;"><i class="fas fa-paper-plane"></i></button>
+        </div>
+    </div>
+    <script>
+        const socket = io();
+        let myId = localStorage.getItem('myId') || 'u_'+Math.random().toString(36).substr(2,5);
+        localStorage.setItem('myId', myId);
+        function toggleChat(m = '') {
+            const c = document.getElementById('side-chat');
+            c.style.display = (c.style.display === 'flex' ? 'none' : 'flex');
+            if(m) { document.getElementById('mi').value = m; document.getElementById('mi').focus(); }
+            document.getElementById('ms').scrollTop = document.getElementById('ms').scrollHeight;
+        }
+        socket.on('init_history', h => {
+            const area = document.getElementById('ms');
+            const myMsgs = h.filter(m => m.clientId === myId);
+            area.innerHTML = myMsgs.map(m => {
+                let content = m.file ? `<a href="/uploads/${m.file}" target="_blank" class="file-link"><i class="fas fa-file-download"></i> ملف مرفق</a>` : m.text;
+                return `<div class="msg-bubble ${m.isAdmin?'msg-admin':'msg-user'}">${content}</div>`;
+            }).join('');
+            area.scrollTop = area.scrollHeight;
+        });
+        socket.on('platform_info', d => { if(d.title) document.getElementById('pn').innerText = d.title; });
+        socket.on('init_services', s => {
+            document.getElementById('sl').innerHTML = s.map(x => `
+                <div class="svc-card">
+                    <div class="svc-header"><span class="svc-name">${x.name}</span><span class="svc-price">${x.price}</span></div>
+                    <div class="svc-desc">${x.desc}</div>
+                    <button class="order-btn" onclick="toggleChat('أرغب في طلب: ${x.name}')">طلب الخدمة الآن</button>
+                </div>`).join('');
+        });
+        socket.on('new_msg', m => {
+            if(m.clientId === myId) {
+                let content = m.file ? `<a href="/uploads/${m.file}" target="_blank" class="file-link"><i class="fas fa-file-download"></i> ملف مرفق</a>` : m.text;
+                document.getElementById('ms').innerHTML += `<div class="msg-bubble ${m.isAdmin?'msg-admin':'msg-user'}">${content}</div>`;
+                document.getElementById('ms').scrollTop = document.getElementById('ms').scrollHeight;
+            }
+        });
+        function sendMsg() {
+            const i = document.getElementById('mi');
+            if(i.value.trim()) { socket.emit('send_msg', { text: i.value, clientId: myId, isAdmin: false }); i.value = ''; }
+        }
+        async function uploadFile() {
+            const fi = document.getElementById('fileInput');
+            if (fi.files.length === 0) return;
+            const fd = new FormData(); fd.append('myFile', fi.files[0]);
+            try {
+                const res = await fetch('/upload', { method: 'POST', body: fd });
+                const data = await res.json();
+                if (data.fileName) { socket.emit('send_msg', { text: "أرسل ملفاً", file: data.fileName, clientId: myId, isAdmin: false }); }
+            } catch (e) { alert("فشل الرفع"); }
+        }
+    </script>
+</body>
+</html>

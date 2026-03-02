@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>المحادثة - منصة الخليج</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body { font-family: sans-serif; background: #e5ddd5; margin: 0; display: flex; flex-direction: column; height: 100vh; }
+        .header { background: #075e54; color: white; padding: 15px; text-align: center; font-weight: bold; }
+        #mList { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+        .bubble { padding: 10px; border-radius: 10px; max-width: 80%; font-size: 14px; box-shadow: 0 1px 1px rgba(0,0,0,0.1); }
+        .u { align-self: flex-end; background: #dcf8c6; }
+        .a { align-self: flex-start; background: white; }
+        .footer { padding: 10px; background: #f0f0f0; display: flex; gap: 10px; border-top: 1px solid #ddd; }
+        input { flex: 1; padding: 12px; border-radius: 25px; border: 1px solid #ddd; outline: none; }
+    </style>
+</head>
+<body>
+    <div class="header">الدعم الفني المباشر</div>
+    <div id="mList"></div>
+    <div class="footer">
+        <input id="txt" placeholder="اكتب رسالتك..." onkeypress="if(event.key==='Enter') send()">
+    </div>
+<script>
+    const socket = io();
+
+    // دالة توليد بصمة جهاز ثابتة (Fingerprint)
+    function getDeviceFingerprint() {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const txt = 'GulfPlatform-ID';
+        ctx.textBaseline = "top";
+        ctx.font = "14px 'Arial'";
+        ctx.fillText(txt, 2, 2);
+        // توليد رقم فريد من خصائص الجوال والشاشة والمتصفح
+        const fingerprint = canvas.toDataURL().slice(-50) + navigator.userAgent.length + screen.width;
+        let hash = 0;
+        for (let i = 0; i < fingerprint.length; i++) {
+            hash = ((hash << 5) - hash) + fingerprint.charCodeAt(i);
+            hash |= 0;
+        }
+        return "U-" + Math.abs(hash).toString(16).slice(0, 5);
+    }
+
+    // نثبت الـ ID في الذاكرة ولكن نعتمد على البصمة لو فُقدت الذاكرة
+    let myId = localStorage.getItem('gulf_fixed_id');
+    if (!myId) {
+        myId = getDeviceFingerprint();
+        localStorage.setItem('gulf_fixed_id', myId);
+    }
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const serviceName = urlParams.get('service');
+
+    if (serviceName && !sessionStorage.getItem('sent_' + serviceName)) {
+        socket.emit('send_msg', { text: "طلب خدمة: " + serviceName, clientId: myId, isAdmin: false });
+        sessionStorage.setItem('sent_' + serviceName, 'true');
+    }
+
+    socket.on('init_history', h => {
+        document.getElementById('mList').innerHTML = h.filter(m => m.clientId === myId).map(m => 
+            `<div class="bubble ${m.isAdmin ? 'a' : 'u'}">${m.text}</div>`).join('');
+        document.getElementById('mList').scrollTop = 99999;
+    });
+
+    socket.on('new_msg', m => {
+        if (m.clientId === myId) {
+            const div = document.createElement('div');
+            div.className = `bubble ${m.isAdmin ? 'a' : 'u'}`;
+            div.textContent = m.text;
+            document.getElementById('mList').appendChild(div);
+            document.getElementById('mList').scrollTop = 99999;
+        }
+    });
+
+    function send() {
+        const t = document.getElementById('txt');
+        if (t.value.trim()) {
+            socket.emit('send_msg', { text: t.value, clientId: myId, isAdmin: false });
+            t.value = '';
+        }
+    }
+</script>
+</body>
+</html>
